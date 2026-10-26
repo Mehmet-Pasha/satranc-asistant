@@ -26,12 +26,18 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path stockfish | Out-Null
-          $zip = "stockfish.zip"
-          Invoke-WebRequest -Uri "https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-windows-x86-64-avx2.zip" -OutFile $zip
-          Expand-Archive -Path $zip -DestinationPath sf_tmp -Force
-          $exe = Get-ChildItem -Path sf_tmp -Recurse -Filter "stockfish-windows-x86-64-avx2.exe" | Select-Object -First 1
+          $rel = Invoke-RestMethod -Uri "https://api.github.com/repos/official-stockfish/Stockfish/releases/latest"
+          $assets = $rel.assets | Where-Object { $_.name -like "stockfish-windows-x86-64*.zip" }
+          $asset = $assets | Where-Object { $_.name -like "*avx2*" } | Select-Object -First 1
+          if (-not $asset) { $asset = $assets | Select-Object -First 1 }
+          if (-not $asset) { throw "Uygun Windows Stockfish asset bulunamadi" }
+          Write-Host "Indiriliyor: $($asset.name)"
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile stockfish.zip
+          Expand-Archive -Path stockfish.zip -DestinationPath sf_tmp -Force
+          $exe = Get-ChildItem -Path sf_tmp -Recurse -Filter "stockfish*.exe" |
+                 Where-Object { $_.Name -notmatch "arm64" } | Select-Object -First 1
           Copy-Item $exe.FullName -Destination "stockfish\stockfish.exe"
-          Remove-Item $zip, sf_tmp -Recurse -Force
+          Remove-Item stockfish.zip, sf_tmp -Recurse -Force
           Get-Item stockfish\stockfish.exe | Select-Object Name, Length
 
       - name: Testleri kos
