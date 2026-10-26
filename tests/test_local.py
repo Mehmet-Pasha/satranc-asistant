@@ -166,6 +166,13 @@ class TestVisionSynthetic(unittest.TestCase):
         noisy = img.astype(np.int16) + rng.integers(-6, 7, img.shape)
         noisy = np.clip(noisy, 0, 255).astype(np.uint8)
 
+        # koordinat etiketleri: chess.com boş a-file karelerine çizdiği
+        # küçük rakamlar gibi — boş kare tespitini bozmamalı (a6 vakası)
+        for sq in ("a6", "a3"):
+            c0 = boardgeom.FILES.index(sq[0])
+            r0 = boardgeom.RANKS.index(sq[1])
+            draw_disc(noisy, c0 * cell + 14, r0 * cell + 16, 6, (255, 255, 255))
+
         placement, err = vision.recognize(noisy, rect, 26.0, tpls)
         self.assertIsNone(err)
         self.assertEqual(placement, boardgeom.start_placement())

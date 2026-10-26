@@ -14,6 +14,7 @@ import numpy as np
 
 from boardgeom import FILES, RANKS, start_placement
 
+EMPTY_MAX_FRAC = 0.06  # taş-gücü piksel oranı bunun altındaysa kare boştur
 INSET = 0.10         # kare kırpımında kenarlardan içeri girme oranı
 PIECE_MIN = 45       # taş pikseli sayılabilmesi için zemin farkı eşiği
 
@@ -86,9 +87,11 @@ def recognize(img, rect, thresh, tpls):
     crops = square_crops(img, rect)
     for sq, crop in crops.items():
         sig, col, en = sig_from_crop(crop)
-        # Boş kare testi enerji ortalamasıyla değil, taş-gücü piksel varlığıyla
-        # yapılır: ortalamalı eşik ekransal gürültü/AA'da sahte-dolu üretir.
-        if not (sig > PIECE_MIN).any():
+        # Boş kare testi: taş-gücü piksellerin ALAN ORANI. "En az bir piksel"
+        # mantığı koordinat etiketlerini (chess.com rakam/harf yazıları)
+        # taş sanıp hata üretiyordu; gerçek taşlar hücrenin %15+ını kaplar,
+        # etiketler %4 civarında kalır.
+        if float((sig > PIECE_MIN).mean()) < EMPTY_MAX_FRAC:
             continue  # boş kare
         best_piece, best_score = None, 1e9
         for piece, lst in tpls.items():
