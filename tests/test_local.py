@@ -195,6 +195,62 @@ class TestVisionSynthetic(unittest.TestCase):
         self.run_if_numpy()
 
 
+class TestAutoDetect(unittest.TestCase):
+    """Sentetik ekran görüntüsünde tahta otomatik bulma."""
+
+    def _screen(self, bx, by, side, noise=3.0, seed=11, extras=True):
+        import numpy as np
+        rng = np.random.default_rng(seed)
+        W, H = 1600, 1000
+        img = np.zeros((H, W, 3), dtype=np.uint8)
+        img[:, :] = (43, 46, 49)  # koyu sayfa arka planı (BGR)
+        light = np.array((180, 210, 120), dtype=np.float32)   # açık kare
+        dark = np.array((80, 60, 34), dtype=np.float32)       # koyu kare
+        cell = side // 8
+        for r in range(8):
+            for c in range(8):
+                col = light if (r + c) % 2 == 0 else dark
+                img[by + r * cell:by + (r + 1) * cell,
+                    bx + c * cell:bx + (c + 1) * cell] = col
+        if extras:
+            img[60:760, 1200:1500] = (30, 34, 40)     # sağ panel (düz blok)
+            img[H - 40:, :] = (55, 55, 55)            # görev çubuğu
+            img[20:50, 100:400] = (25, 28, 32)        # tarayıcı çubuğu
+        n = rng.normal(0, noise, img.shape)
+        return np.clip(img.astype(np.float32) + n, 0, 255).astype(np.uint8)
+
+    def test_finds_board(self):
+        import autodetect
+        for bx, by, side in [(80, 120, 480), (600, 300, 384), (100, 100, 320)]:
+            img = self._screen(bx, by, side)
+            got = autodetect.detect_board(img)
+            self.assertIsNotNone(got, "tahta bulunamadı: %d,%d,%d" % (bx, by, side))
+            gx, gy, gw, gh = got
+            self.assertLess(abs(gx - bx), 8, got)
+            self.assertLess(abs(gy - by), 8, got)
+            self.assertLess(abs(gw - side), 10, got)
+            self.assertLess(abs(gh - side), 10, got)
+
+    def test_no_board(self):
+        import autodetect
+        img = self._screen(0, 0, 480, extras=True)
+        img[:, :] = (43, 46, 49)  # tamamen boş masaüstü
+        img[100:800, 100:900] = (30, 34, 40)  # düz pencere, damalı yok
+        self.assertIsNone(autodetect.detect_board(img))
+
+    def test_hd_scale(self):
+        import numpy as np
+        import autodetect
+        img = self._screen(300, 150, 800)  # 1600x1000'de büyük tahta
+        big = np.repeat(np.repeat(img, 2, axis=0), 2, axis=1)  # 3200x2000
+        got = autodetect.detect_board(big)
+        self.assertIsNotNone(got)
+        gx, gy, gw, gh = got
+        self.assertLess(abs(gx - 600), 16, got)
+        self.assertLess(abs(gy - 300), 16, got)
+        self.assertLess(abs(gw - 1600), 20, got)
+
+
 class TestImports(unittest.TestCase):
     """main.py'de kullanılan her Q* adı mutlaka import edilmiş olmalı
     (PyQt6 uygulaması burada çalıştırılamaz; AST ile statik denetler)."""

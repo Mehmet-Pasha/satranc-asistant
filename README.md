@@ -21,11 +21,19 @@ sonra Stockfish'i https://stockfishchess.org/download/ adresinden indir,
 
 ## Kullanım (her site için BİR KEZ kurulum)
 
-1. **① Kalibrasyon** → ekranda tahtanın köşesinden köşesine sürükle-bırak.
-2. Oyunu **başlangıç diziliminde** aç (hamle yapılmamış) → **② Referans Al**.
-   Program 12 taşın şablonunu bu görüntüden çıkarır.
-3. **Profil Kaydet** (örn. `chesscom`, `lichess`) → sonraki açılışlarda Yükle yeter.
-4. Siyah tarafı oynuyorsan **"Siyah altta"** kutusunu işaretle.
+1. **① Tahtayı Bul (otomatik)** → program tahtayı ekranda kendisi bulur
+   (2-6 saniye). Oyun **başlangıç diziliminde** açıksa referansı da kendisi
+   alır ve profili kaydeder — tek düğme yeter.
+   Bulamazsa elle seçim ekranı açılır: tahtanın köşesinden köşesine sürükle.
+2. Otomatik referans alınamadıysa: oyunu **başlangıç diziliminde** aç
+   (hamle yapılmamış) → **② Referans Al**.
+3. Siyah tarafı oynuyorsan **"Siyah altta"** kutusunu işaretle.
+
+### Önerilen temalar (chess.com)
+- Tahta: **Green** veya **Brown** (düz renk) — otomatik bulma düz renk ister
+- Taşlar: **Standard** veya **Neo** (düz renk, yüksek kontrast)
+- Kaçın: 3D tahtalar, doku/foto temalar (Marble, Wood…), saydam/outline taşlar
+- Lichess: varsayılan tema + taşlar sorunsuz.
 
 ## Modlar
 

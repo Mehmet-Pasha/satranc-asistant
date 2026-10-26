@@ -27,11 +27,12 @@ APP = app_dir()
 sys.path.insert(0, APP)
 
 import boardgeom
+import autodetect
 import vision
 from engine import StockfishEngine
 
 from PyQt6.QtCore import QObject, QPointF, Qt, pyqtSignal
-from PyQt6.QtGui import QBrush, QColor, QPainter, QPen, QPolygonF
+from PyQt6.QtGui import QBrush, QColor, QImage, QPainter, QPen, QPixmap, QPolygonF
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QGridLayout,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox,
@@ -397,7 +398,9 @@ class Overlay(QWidget):
 
 
 class CalibOverlay(QWidget):
-    """Tam ekran karartma; kullanıcı tahtanın üzerine dikdörtgen çizer."""
+    """Tam ekran seçim: ekranın fotoğrafı üstünde karartma + dikdörtgen.
+    (Saydam pencere Windows'ta simsiyah render olabiliyor; bu yüzden
+    arka plan olarak ekran görüntüsünün kendisi çizilir.)"""
     rectPicked = pyqtSignal(tuple)
 
     def __init__(self):
@@ -412,10 +415,17 @@ class CalibOverlay(QWidget):
         self.setCursor(Qt.CursorShape.CrossCursor)
         scr = QApplication.primaryScreen().geometry()
         self.setGeometry(scr)
+        img = vision.grab_screen()
+        h, w = img.shape[:2]
+        qimg = QImage(img.data, w, h, 3 * w, QImage.Format.Format_BGR888)
+        self.bg = QPixmap.fromImage(qimg.copy())
+        self._sx = self.bg.width() / max(1, self.width())
+        self._sy = self.bg.height() / max(1, self.height())
         self.show()
 
     def paintEvent(self, ev):
         p = QPainter(self)
+        p.drawPixmap(0, 0, self.width(), self.height(), self.bg)
         p.fillRect(self.rect(), QColor(0, 0, 0, 130))
         if self.origin and self.cur:
             x = min(self.origin.x(), self.cur.x())
@@ -448,7 +458,9 @@ class CalibOverlay(QWidget):
             w, h = abs(a.x() - b.x()), abs(a.y() - b.y())
             self.close()
             if w > 60 and h > 60:
-                self.rectPicked.emit((x, y, w, h))
+                # Qt mantıksal piksel -> fiziksel (mss ekran görüntüsü) piksel
+                self.rectPicked.emit((int(x * self._sx), int(y * self._sy),
+                                      int(w * self._sx), int(h * self._sy)))
         self.origin = None
 
     def keyPressEvent(self, ev):
@@ -498,10 +510,13 @@ class Panel(QWidget):
         g1 = QGroupBox("1) Kurulum (her site için bir kez)")
         v1 = QVBoxLayout(g1)
         row1 = QHBoxLayout()
-        b_cal = QPushButton("① Kalibrasyon (tahtayı seç)")
+        b_auto = QPushButton("① Tahtayı Bul (otomatik)")
+        b_auto.clicked.connect(self.auto_calib)
+        b_cal = QPushButton("Elle seç")
         b_cal.clicked.connect(self.start_calib)
-        b_ref = QPushButton("② Referans Al (başlangıç dizilimi)")
+        b_ref = QPushButton("② Referans Al")
         b_ref.clicked.connect(self.take_reference)
+        row1.addWidget(b_auto)
         row1.addWidget(b_cal)
         row1.addWidget(b_ref)
         v1.addLayout(row1)
@@ -648,6 +663,43 @@ class Panel(QWidget):
     def start_calib(self):
         self.calib = CalibOverlay()
         self.calib.rectPicked.connect(self.on_rect)
+
+    def auto_calib(self):
+        """Tahtayı ekranda kendisi bulur; başlangıç dizilimi görünürse
+        referansı da alır, profili kaydeder."""
+        try:
+            img = vision.grab_screen()
+        except Exception as e:
+            log("Ekran görüntüsü alınamadı: %s" % e)
+            return
+        log("Tahta aranıyor (2-6 saniye sürebilir)...")
+        rect = autodetect.detect_board(img)
+        if rect is None:
+            log("Tahtayı otomatik bulamadım — elle seçim ekranı açılıyor.")
+            self.start_calib()
+            return
+        self.on_rect(rect)
+        try:
+            tpls = vision.extract_reference(img, rect)
+            placement, err = vision.recognize(
+                img, rect, float(STATE["thresh"]), tpls)
+            if err is None and len(placement) == 32:
+                STATE["templates"] = tpls
+                STATE["last_placement"] = None
+                os.makedirs(PROFILE_DIR, exist_ok=True)
+                name = STATE.get("profile") or "otomatik"
+                vision.save_profile(
+                    os.path.join(PROFILE_DIR, name + ".npz"), tpls, rect)
+                STATE["profile"] = name
+                save_cfg()
+                self.refresh_profiles()
+                log("Tahta bulundu + referans alındı (32 taş ✓), profil: %s. "
+                    "Modlar hazır!" % name)
+            else:
+                log("Tahta bulundu: %s. Oyunu BAŞLANGIÇ dizilimine getirip "
+                    "'② Referans Al'a bas." % (rect,))
+        except Exception as e:
+            log("Tahta bulundu; referans hatası: %s" % e)
 
     def on_rect(self, rect):
         STATE["rect"] = list(rect)
