@@ -1,0 +1,13 @@
+# Derleme / geliştirme artıkları
+venv/
+__pycache__/
+*.pyc
+build/
+dist/
+*.spec
+
+# Kullanıcıya özel çalışma verisi (repo'ya girmemeli)
+config.json
+profiles/
+stockfish/
+*.zip

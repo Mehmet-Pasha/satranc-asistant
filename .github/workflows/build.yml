@@ -1,0 +1,60 @@
+name: SatrancAsistan derle (Windows exe)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Kodu al
+        uses: actions/checkout@v4
+
+      - name: Python kur (3.12)
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Kutuphaneleri kur
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Resmi Stockfish indir (stockfishchess.org yayini)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path stockfish | Out-Null
+          $zip = "stockfish.zip"
+          Invoke-WebRequest -Uri "https://github.com/official-stockfish/Stockfish/releases/latest/download/stockfish-windows-x86-64-avx2.zip" -OutFile $zip
+          Expand-Archive -Path $zip -DestinationPath sf_tmp -Force
+          $exe = Get-ChildItem -Path sf_tmp -Recurse -Filter "stockfish-windows-x86-64-avx2.exe" | Select-Object -First 1
+          Copy-Item $exe.FullName -Destination "stockfish\stockfish.exe"
+          Remove-Item $zip, sf_tmp -Recurse -Force
+          Get-Item stockfish\stockfish.exe | Select-Object Name, Length
+
+      - name: Testleri kos
+        run: python tests/test_local.py
+
+      - name: .exe derle
+        run: pyinstaller --noconsole --onedir --name SatrancAsistan --collect-submodules PyQt6 main.py
+
+      - name: Stockfish'i pakete ekle
+        shell: pwsh
+        run: |
+          Copy-Item -Path stockfish -Destination dist\SatrancAsistan\stockfish -Recurse -Force
+          Get-ChildItem dist\SatrancAsistan | Select-Object Name
+
+      - name: Zip paketi olustur
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist\SatrancAsistan -DestinationPath SatrancAsistan-win64.zip
+          Get-Item SatrancAsistan-win64.zip | Select-Object Name, Length
+
+      - name: Artifact yukle
+        uses: actions/upload-artifact@v4
+        with:
+          name: SatrancAsistan-win64
+          path: SatrancAsistan-win64.zip
+          retention-days: 30

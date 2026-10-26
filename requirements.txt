@@ -1,0 +1,6 @@
+PyQt6
+numpy
+mss
+pyautogui
+keyboard
+pyinstaller
