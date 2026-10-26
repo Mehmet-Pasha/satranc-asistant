@@ -195,5 +195,24 @@ class TestVisionSynthetic(unittest.TestCase):
         self.run_if_numpy()
 
 
+class TestImports(unittest.TestCase):
+    """main.py'de kullanılan her Q* adı mutlaka import edilmiş olmalı
+    (PyQt6 uygulaması burada çalıştırılamaz; AST ile statik denetler)."""
+
+    def test_qt_names_imported(self):
+        import ast
+        root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        src = open(os.path.join(root, "main.py"), encoding="utf-8").read()
+        tree = ast.parse(src)
+        imported = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                for a in node.names:
+                    imported.add(a.asname or a.name)
+        used = {n.id for n in ast.walk(tree)
+                if isinstance(n, ast.Name) and n.id.startswith("Q")}
+        self.assertEqual(used - imported, set())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

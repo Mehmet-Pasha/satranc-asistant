@@ -34,8 +34,8 @@ from PyQt6.QtCore import QObject, QPointF, Qt, pyqtSignal
 from PyQt6.QtGui import QBrush, QColor, QPainter, QPen, QPolygonF
 from PyQt6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QDoubleSpinBox, QGridLayout,
-    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QTextEdit,
-    QVBoxLayout, QWidget,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox,
+    QTextEdit, QVBoxLayout, QWidget,
 )
 
 STATE = {
