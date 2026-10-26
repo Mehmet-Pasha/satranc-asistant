@@ -14,7 +14,6 @@ import numpy as np
 
 from boardgeom import FILES, RANKS, start_placement
 
-EMPTY_RATIO = 0.30   # enerji bu orandan küçükse kare boş sayılır
 INSET = 0.10         # kare kırpımında kenarlardan içeri girme oranı
 PIECE_MIN = 45       # taş pikseli sayılabilmesi için zemin farkı eşiği
 
@@ -83,12 +82,13 @@ def _color_diff(c1, c2):
 
 def recognize(img, rect, thresh, tpls):
     """(yerleşim dict | None, hata | None) döndürür."""
-    empty_limit = max(6.0, thresh * EMPTY_RATIO)
     placement = {}
     crops = square_crops(img, rect)
     for sq, crop in crops.items():
         sig, col, en = sig_from_crop(crop)
-        if en < empty_limit:
+        # Boş kare testi enerji ortalamasıyla değil, taş-gücü piksel varlığıyla
+        # yapılır: ortalamalı eşik ekransal gürültü/AA'da sahte-dolu üretir.
+        if not (sig > PIECE_MIN).any():
             continue  # boş kare
         best_piece, best_score = None, 1e9
         for piece, lst in tpls.items():
