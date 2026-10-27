@@ -1,17 +1,24 @@
 # -*- coding: utf-8 -*-
-"""Ekran görüntüsünden satranç tahtasını otomatik bulma.
+"""Ekran görüntüsünden satranç tahtasını otomatik bulma — çok stratejili.
 
-Yaklaşım:
-  1) Ekranın baskın (arka plan) renginden farklı olan bölgeleri ayır.
-  2) İnce çizgi/gürültüyü (metin, ikon) komşuluk filtresiyle temizle;
-     geriye sağlam bloklar kalır (tahta, oyuncu kartları...).
-  3) Blokların bbox'larından kare adaylar çıkar.
-  4) Adayın 7 iç kılavuz çizgisini kenar profilinden fit ederek kutuyu
-     tam ızgaraya oturt (snap), sonra 8x8 damalı doğrulamayla puanla:
-     komşu kareler farklı, çapraz komşular aynı renk olmalı.
+v1'in kök sorunu tek yönteme (renk-blob) bağımlılık ve teşhis yokluğuydu:
+  - Tahtaya bitişik düz kutular (oyuncu kartları, yan panel) blob'u tahtayla
+    BİRLEŞTİRİYORDU; kutu kare olmadığı için kare tahmini kayıyor, doğrulama
+    düşüyordu.
+  - Segmentasyon başarısızınca (doku temalar, sıra dışı sayfa renkleri)
+    yedek yöntem yoktu.
+  - Başarısızlıkta NEDEN başarısız olduğu hiç bildirilmiyordu.
 
-Düz renkli (tek renk kareler) temalarda çalışır; doku/foto temalarda
-elle seçim gerekir. Tipik koşu süresi 2-6 saniyedir.
+v2 stratejiler:
+  A) Blok stratejisi: blob bbox'ı İÇİNDE kaba damalı tarama yapılır; tahtanın
+     kutu içinde nerede olduğu tahmin edilmez, ölçülür (birleşik kart/panel
+     durumunu çözer).
+  B) Serbest tarama: segmentasyondan bağımsız — integral imajla tüm ekranda
+     çok ölçekli 8x8 damalı yapı taraması (doku temalara da dayanıklı).
+
+Her aday _snap_grid (alt-piksel ızgara oturtma) + _validate (damalı skor)
+ile doğrulanır; en yüksek skor kazanır. detect_board_ex() teşhis bilgisi
+döndürür — başarısızlıkta en iyi adaylar ve neden raporlanır.
 """
 
 import numpy as np
@@ -23,6 +30,10 @@ NEIGH = 25         # komşuluk penceresi (küçük ölçek pikseli)
 MIN_SIDE = 96      # tahtadan küçük kutu aday olamaz (küçük ölçek)
 MIN_ORTH = 14.0    # komşu kare ort. renk farkı eşiği
 MIN_SCORE = 12.0   # orth - diag skor eşiği
+COARSE_MIN = 6.0   # kaba taramada aday sayma eşiği (ince doğrulama sonra)
+SCAN_TOPK = 8      # serbest taramadan incelenecek aday sayısı
+BLOB_TOP = 3       # incelenecek en büyük blob sayısı
+SIDE_VARIANTS = (0.90, 0.95, 1.0, 1.05, 1.10)  # ölçek merdiveni boşluk kapatma
 
 
 def _luma(img):
@@ -183,9 +194,92 @@ def _validate(luma, x, y, side):
     return s
 
 
-def detect_board(img):
-    """(x, y, w, h) fiziksel piksel kutusu döndürür; bulamazsa None."""
+def _integral(L):
+    """Luminance integral imajı: ii[y, x] = L[:y, :x] toplamı."""
+    return np.pad(np.cumsum(np.cumsum(L.astype(np.float64), axis=0), axis=1),
+                  ((1, 0), (1, 0)))
+
+
+def _scan_region(L, ii, x0, y0, x1, y1, sides, stride_frac=0.5, topk=6):
+    """Bölge [x0:x1, y0:y1] içinde çok konumlu damalı aday taraması.
+
+    Konum adımı hücre/2: yarım hücreden fazla kayan konum hücre ort.-
+    lamalarını bulanıklaştırıp skoru sıfırlar; adım hücreden küçük olmalı.
+    Döner: [(skor, x, y, s), ...] skor sıralı, en fazla topk aday.
+    """
+    H, W = L.shape
+    out = []
+    for s in sides:
+        s = int(round(s))
+        if s < 64 or s > min(H, W):
+            continue
+        cell = s / 8.0
+        bx0, by0 = max(0, int(x0)), max(0, int(y0))
+        bx1, by1 = min(W, int(x1) - s + 1), min(H, int(y1) - s + 1)
+        if bx1 - bx0 < 1 or by1 - by0 < 1:
+            continue
+        xs = np.rint(np.arange(bx0, bx1, cell * stride_frac)).astype(np.int64)
+        ys = np.rint(np.arange(by0, by1, cell * stride_frac)).astype(np.int64)
+        if not len(xs) or not len(ys):
+            continue
+        offs = np.rint(np.arange(9) * cell).astype(np.int64)
+        Yc = np.clip(ys[:, None] + offs[None, :], 0, H)    # (Ny, 9)
+        Xc = np.clip(xs[:, None] + offs[None, :], 0, W)    # (Nx, 9)
+        G = ii[Yc[:, :, None, None], Xc[None, None, :, :]]  # (Ny, 9ky, Nx, 9kx)
+        # hücre toplamları → (Ny, 8r, Nx, 8c)
+        S = (G[:, 1:, :, 1:] - G[:, :-1, :, 1:]
+             - G[:, 1:, :, :-1] + G[:, :-1, :, :-1])
+        ay = np.diff(offs).astype(np.float64)
+        area = ay[:, None] * ay[None, :]
+        cm = S / area[None, :, None, :]
+        a = np.abs(cm[:, :-1, :, :] - cm[:, 1:, :, :]).sum(axis=(1, 3))  # dikey
+        b = np.abs(cm[:, :, :, :-1] - cm[:, :, :, 1:]).sum(axis=(1, 3))  # yatay
+        orth = (a + b) / 112.0
+        d1 = np.abs(cm[:, :-1, :, :-1] - cm[:, 1:, :, 1:]).sum(axis=(1, 3))
+        d2 = np.abs(cm[:, :-1, :, 1:] - cm[:, 1:, :, :-1]).sum(axis=(1, 3))
+        diag = (d1 + d2) / 98.0
+        score = orth - diag
+        idx = np.argwhere(score >= COARSE_MIN)
+        if len(idx):
+            sc = score[idx[:, 0], idx[:, 1]]
+            order = np.argsort(-sc)[:topk]
+            for o in order:
+                iy, ix = int(idx[o, 0]), int(idx[o, 1])
+                out.append((float(sc[o]), int(xs[ix]), int(ys[iy]), s))
+    out.sort(key=lambda t: -t[0])
+    return out[:topk]
+
+
+def _try(L, x, y, side):
+    """Adayı snap + doğrula. Döner: (skor, sx, sy, ss) veya None."""
+    snap = _snap_grid(L, int(x) - 2, int(y) - 2, int(side) + 4)
+    if snap is None:
+        snap = (float(x), float(y), float(side))
+    sc = _validate(L, snap[0], snap[1], snap[2])
+    if sc < 0:
+        return None
+    return (sc, snap[0], snap[1], snap[2])
+
+
+def _refine(L, coarse, strategy):
+    """Kaba adayları ölçek varyantlarıyla ince doğrula.
+    Döner: [(skor, x, y, s, strateji), ...] skor sıralı."""
+    out = []
+    for sc, x, y, s in coarse:
+        for f in SIDE_VARIANTS:
+            r = _try(L, x, y, s * f)
+            if r:
+                out.append((r[0], r[1], r[2], r[3], strategy))
+    out.sort(key=lambda t: -t[0])
+    return out
+
+
+def detect_board_ex(img):
+    """(rect|None, diag) döndürür. rect=(x, y, w, h) fiziksel piksel.
+    diag: {'image', 'strategy', 'score', 'reason', 'candidates', 'blobs'}"""
     H, W = img.shape[:2]
+    diag = {"image": "%dx%d" % (W, H), "strategy": None, "score": None,
+            "reason": "", "candidates": [], "blobs": 0}
     scale = 1.0
     small = img
     if max(H, W) > 1280:
@@ -193,35 +287,79 @@ def detect_board(img):
         scale = 1.0 / stride
         small = np.asarray(img[::stride, ::stride], dtype=img.dtype)
     Ls = _luma(small)
-    fgs = _fg_mask(small)
-    solids = _box_frac(fgs, NEIGH) >= SOLID_KEEP
+    hs, ws = Ls.shape
 
-    best = None
-    for bx0, by0, bw, bh, _area in _components(solids, MIN_SIDE * MIN_SIDE)[:3]:
-        side = int(min(bw, bh))
-        if side < MIN_SIDE:
-            continue
-        x = bx0 + max(0, (bw - side) // 2)
-        y = by0 + max(0, (bh - side) // 2)
-        snap = _snap_grid(Ls, x, y, side)
-        if snap is None:
-            sx, sy, ss = float(x), float(y), float(side)
-        else:
-            sx, sy, ss = snap
-        sc = _validate(Ls, sx, sy, ss)
-        if sc > 0 and (best is None or sc > best[0]):
-            best = (sc, sx, sy, ss)
-    if best is None:
-        return None
+    # --- Strateji A: blob içinde mini tarama (birleşik kart/panel dayanıklı)
+    refined = []
+    try:
+        fgs = _fg_mask(small)
+        solids = _box_frac(fgs, NEIGH) >= SOLID_KEEP
+        blobs = _components(solids, MIN_SIDE * MIN_SIDE)[:BLOB_TOP]
+        diag["blobs"] = len(blobs)
+        for bx0, by0, bw, bh, _area in blobs:
+            smin = 0.55 * min(bw, bh)
+            sides = np.linspace(smin, 1.05 * min(bw, bh), 7).tolist()
+            sides += [min(bw, bh), max(bw, bh)]
+            coarse = _scan_region(Ls, _integral(Ls), bx0, by0,
+                                  bx0 + bw, by0 + bh, sides,
+                                  stride_frac=0.5, topk=6)
+            # kenar-hizalı adaylar: birleşik kart/panelde tahta kutunun bir
+            # kenarına yaslanır (üst/alt/sol/sağ + ortalı) — mini taramanın
+            # adım ızgarasına tam gelmeyebilecek hizaları kestirme olarak dene
+            for s in (min(bw, bh), max(bw, bh)):
+                if s < MIN_SIDE * 0.5 or bx0 + s > ws or by0 + s > hs:
+                    continue
+                for xx3 in (bx0, bx0 + max(0, (bw - s) // 2), bx0 + bw - s):
+                    for yy3 in (by0, by0 + max(0, (bh - s) // 2), by0 + bh - s):
+                        coarse.append((float(COARSE_MIN), int(xx3), int(yy3), int(s)))
+            coarse.sort(key=lambda t: -t[0])
+            refined.extend(_refine(Ls, coarse[:12], "blob"))
+    except Exception as e:  # segmentasyon asla tüm aramayı öldürmesin
+        diag["reason"] = "blob stratejisi istisna: %s; " % e
 
-    # fiziksel çözünürlüğe çevir, orada tekrar snap + doğrula
-    _, sx, sy, ss = best
+    # --- Strateji B: segmentasyondan bağımsız serbest tarama
+    smin = max(64.0, MIN_SIDE * 0.5)
+    smax = min(hs, ws) * 0.95
+    if smax <= smin:
+        sides = [float(min(hs, ws))]
+    else:
+        sides = np.unique(np.geomspace(smin, smax, 20)).astype(float).tolist()
+    coarse = _scan_region(Ls, _integral(Ls), 0, 0, ws, hs, sides,
+                          stride_frac=0.5, topk=SCAN_TOPK)
+    refined.extend(_refine(Ls, coarse, "tarama"))
+
+    refined.sort(key=lambda t: -t[0])
+    diag["candidates"] = [
+        {"strategy": st, "score": round(sc, 1),
+         "rect": [int(round(x / scale)), int(round(y / scale)),
+                  int(round(s / scale)), int(round(s / scale))]}
+        for sc, x, y, s, st in refined[:5]]
+    if not refined:
+        diag["reason"] += "damalı aday yok (blob=%d); " % diag["blobs"]
+        return None, diag
+
+    sc, sx, sy, ss, st = refined[0]
+    if sc < MIN_SCORE:
+        diag["reason"] += "en iyi damalı skor %.1f < eşik %.1f (blob=%d); " \
+            % (sc, MIN_SCORE, diag["blobs"])
+        return None, diag
+
+    # --- fiziksel çözünürlükte son snap + doğrulama
     fx, fy, fs = sx / scale, sy / scale, ss / scale
     LF = _luma(img)
     snap = _snap_grid(LF, int(fx) - 2, int(fy) - 2, int(fs) + 4)
-    if snap is None:
-        snap = (fx, fy, fs)
-    fx, fy, fs = snap
+    if snap is not None and _validate(LF, snap[0], snap[1], snap[2]) > 0:
+        fx, fy, fs = snap
     if _validate(LF, fx, fy, fs) < 0:
-        return None
-    return int(round(fx)), int(round(fy)), int(round(fs)), int(round(fs))
+        diag["reason"] += "tam çözünürlük doğrulaması geçmedi (skor %.1f); " \
+            % _validate(LF, fx, fy, fs)
+        return None, diag
+    diag["strategy"] = st
+    diag["score"] = round(float(sc), 1)
+    return (int(round(fx)), int(round(fy)), int(round(fs)), int(round(fs))), diag
+
+
+def detect_board(img):
+    """(x, y, w, h) fiziksel piksel kutusu döndürür; bulamazsa None."""
+    rect, _diag = detect_board_ex(img)
+    return rect

@@ -22,17 +22,23 @@ sonra Stockfish'i https://stockfishchess.org/download/ adresinden indir,
 ## Kullanım (her site için BİR KEZ kurulum)
 
 1. **① Tahtayı Bul (otomatik)** → program tahtayı ekranda kendisi bulur
-   (2-6 saniye). Oyun **başlangıç diziliminde** açıksa referansı da kendisi
-   alır ve profili kaydeder — tek düğme yeter.
-   Bulamazsa elle seçim ekranı açılır: tahtanın köşesinden köşesine sürükle.
+   (yaklaşık 1-4 saniye; iki bağımsız yöntemle arar: blok analizi +
+   damalı yapı taraması). Oyun **başlangıç diziliminde** açıksa referansı da
+   kendisi alır ve profili kaydeder — tek düğme yeter.
+   Bulamazsa panele neden yazar ve ekran görüntüsü + teşhis dosyasını
+   `profiles\debug\` klasörüne kaydeder; bu dosyayı destek olarak
+   gönderirsen sorun tek bakışta çözülür. Elle seçim de her zaman var:
+   tahtanın köşesinden köşesine sürükle.
 2. Otomatik referans alınamadıysa: oyunu **başlangıç diziliminde** aç
    (hamle yapılmamış) → **② Referans Al**.
 3. Siyah tarafı oynuyorsan **"Siyah altta"** kutusunu işaretle.
 
 ### Önerilen temalar (chess.com)
-- Tahta: **Green** veya **Brown** (düz renk) — otomatik bulma düz renk ister
+- Tahta: **Green** veya **Brown** (düz renk) — en güvenli seçim
 - Taşlar: **Standard** veya **Neo** (düz renk, yüksek kontrast)
-- Kaçın: 3D tahtalar, doku/foto temalar (Marble, Wood…), saydam/outline taşlar
+- Doku/foto temalar (Marble, Wood…) denenebilir: damalı tarama artık bu
+  temalarda da genelde çalışır; olmazsa "Elle seç" her zaman yedek.
+- Kaçın: 3D tahtalar, saydam/outline taşlar
 - Lichess: varsayılan tema + taşlar sorunsuz.
 
 ## Modlar

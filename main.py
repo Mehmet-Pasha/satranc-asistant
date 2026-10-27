@@ -365,8 +365,13 @@ class Overlay(QWidget):
             return
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        centers = boardgeom.squares_from_rect(*self.rect, STATE["flip"])
-        sq = min(self.rect[2], self.rect[3]) / 8.0
+        # STATE rect fiziksel pikseldir (mss); Qt boyama mantıksal pikseldir.
+        # DPI ölçeklemesi %100 değilse oklar yanlış yere çizilir — çevir.
+        f = self.devicePixelRatioF() or 1.0
+        rect_l = (self.rect[0] / f, self.rect[1] / f,
+                  self.rect[2] / f, self.rect[3] / f)
+        centers = boardgeom.squares_from_rect(*rect_l, STATE["flip"])
+        sq = min(rect_l[2], rect_l[3]) / 8.0
         gold = QColor(255, 200, 40, 235)
         dark = QColor(25, 18, 0, 230)
         for f_sq, t_sq in self.arrows:
@@ -664,6 +669,40 @@ class Panel(QWidget):
         self.calib = CalibOverlay()
         self.calib.rectPicked.connect(self.on_rect)
 
+    def _save_detect_debug(self, img, diag):
+        """Başarısız algılamada ekran görüntüsü + teşhis metnini kaydet.
+        Döner: teşhis metin dosyasının yolu (kullanıcıya gösterilir)."""
+        d = os.path.join(PROFILE_DIR, "debug")
+        try:
+            os.makedirs(d, exist_ok=True)
+        except Exception:
+            return "(teşhis klasörü oluşturulamadı)"
+        ts = time.strftime("%Y%m%d_%H%M%S")
+        png = os.path.join(d, "tahta_%s.png" % ts)
+        try:
+            h, w = img.shape[:2]
+            qimg = QImage(img.data, w, h, 3 * w, QImage.Format.Format_BGR888)
+            if not qimg.copy().save(png, "PNG"):
+                png = "(PNG kaydedilemedi)"
+        except Exception:
+            png = "(PNG kaydedilemedi)"
+        txt = os.path.join(d, "tahta_%s.txt" % ts)
+        try:
+            lines = ["ekran: %s" % diag.get("image", "?"),
+                     "blob sayisi: %s" % diag.get("blobs", "?"),
+                     "strateji: %s" % (diag.get("strategy") or "-"),
+                     "skor: %s" % (diag.get("score") if diag.get("score") is not None else "-"),
+                     "neden: %s" % diag.get("reason", ""),
+                     "adaylar (tam çözünürlük koordinatı):"]
+            for c in diag.get("candidates", []):
+                lines.append("  %s skor=%s rect=%s" % (
+                    c.get("strategy"), c.get("score"), c.get("rect")))
+            with open(txt, "w", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+            return txt + "  (görüntü: %s)" % png
+        except Exception:
+            return "(teşhis metni yazılamadı) görüntü: %s" % png
+
     def auto_calib(self):
         """Tahtayı ekranda kendisi bulur; başlangıç dizilimi görünürse
         referansı da alır, profili kaydeder."""
@@ -673,11 +712,21 @@ class Panel(QWidget):
             log("Ekran görüntüsü alınamadı: %s" % e)
             return
         log("Tahta aranıyor (2-6 saniye sürebilir)...")
-        rect = autodetect.detect_board(img)
+        try:
+            rect, diag = autodetect.detect_board_ex(img)
+        except Exception as e:
+            rect, diag = None, {"reason": "istisna: %s" % e,
+                                "image": "%dx%d" % (img.shape[1], img.shape[0])}
         if rect is None:
-            log("Tahtayı otomatik bulamadım — elle seçim ekranı açılıyor.")
-            self.start_calib()
+            path = self._save_detect_debug(img, diag)
+            log("Otomatik bulamadım (%s)" % (diag.get("reason", "").strip(" ;") or "neden bilinmiyor"))
+            log("Teşhis kaydı: %s" % path)
+            log("İpucu: düz renkli tahta teması gerekir; doku/3D temada "
+                "'Elle seç' ile köşeden köşeye seç.")
             return
+        log("Tahta bulundu: %dx%d @ (%d,%d) [skor %s, %s]" % (
+            rect[2], rect[3], rect[0], rect[1],
+            diag.get("score"), diag.get("strategy")))
         self.on_rect(rect)
         try:
             tpls = vision.extract_reference(img, rect)

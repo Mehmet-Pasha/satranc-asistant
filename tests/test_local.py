@@ -258,6 +258,102 @@ class TestAutoDetect(unittest.TestCase):
         self.assertLess(abs(gw - 1600), 20, got)
 
 
+    def _add_pieces(self, img, bx, by, side):
+        """Başlangıç dizilimi taşları (basit diskler) — gerçek kalibrasyon
+        ekranını taklit eder: her karede taş varken de algılama çalışmalı."""
+        import numpy as np
+        cell = side // 8
+        yy, xx = np.mgrid[0:img.shape[0], 0:img.shape[1]]
+        Wt = (232, 232, 224)   # beyaz taş (BGR)
+        Bk = (38, 38, 42)      # siyah taş
+        for sq, piece in boardgeom.start_placement().items():
+            c = boardgeom.FILES.index(sq[0])
+            r = boardgeom.RANKS.index(sq[1])
+            cx, cy = bx + c * cell + cell // 2, by + r * cell + cell // 2
+            rad = int(cell * 0.38)
+            img[(yy - cy) ** 2 + (xx - cx) ** 2 < rad * rad] = \
+                Wt if piece[0] == "w" else Bk
+        return img
+
+    def test_pieces_on_board(self):
+        """Gerçek kalibrasyon sahnesi: başlangıç dizilimi taşlarla dolu."""
+        import autodetect
+        img = self._screen(200, 150, 480)
+        self._add_pieces(img, 200, 150, 480)
+        got = autodetect.detect_board(img)
+        self.assertIsNotNone(got)
+        gx, gy, gw, gh = got
+        self.assertLess(abs(gx - 200), 8, got)
+        self.assertLess(abs(gy - 150), 8, got)
+        self.assertLess(abs(gw - 480), 10, got)
+
+    def test_merged_panel(self):
+        """KÖK NEDEN regresyonu: tahtaya BİTİŞİK düz panel (oyuncu kartı).
+        v1'de blob birleşiyor, kare tahmini kayıyor, doğrulama düşüyordu."""
+        import autodetect
+        img = self._screen(200, 240, 480)
+        img[100:240, 200:680] = (90, 40, 30)   # kart bloğu tahtanın üstünde
+        got = autodetect.detect_board(img)
+        self.assertIsNotNone(got, got)
+        gx, gy, gw, gh = got
+        self.assertLess(abs(gx - 200), 8, got)
+        self.assertLess(abs(gy - 240), 8, got)
+        self.assertLess(abs(gw - 480), 10, got)
+
+    def test_light_theme(self):
+        """Açık sayfa + chess.com yeşil/krem tahta + koordinat gürültüsü."""
+        import numpy as np
+        import autodetect
+        rng = np.random.default_rng(5)
+        W, H = 1600, 1000
+        img = np.zeros((H, W, 3), dtype=np.uint8)
+        img[:, :] = (250, 250, 250)                 # beyaz sayfa
+        img[100:900, 1100:1500] = (245, 245, 245)   # yan panel (arka plan ailesi)
+        bx, by, side = 200, 200, 512
+        cell = side // 8
+        light = np.array((210, 238, 238), dtype=np.float32)  # krem (BGR)
+        dark = np.array((86, 150, 118), dtype=np.float32)    # yeşil (BGR)
+        for r in range(8):
+            for c in range(8):
+                col = light if (r + c) % 2 == 0 else dark
+                img[by + r * cell:by + (r + 1) * cell,
+                    bx + c * cell:bx + (c + 1) * cell] = col
+        # koordinat etiketleri: küçük beyaz yazı blokları (a-dosyası, 1-sıra)
+        for k in range(8):
+            img[by + k * cell + 8:by + k * cell + 16, bx + 8:bx + 20] = (255, 255, 255)
+            y7 = by + 7 * cell
+            img[y7 - 10:y7 - 2, bx + k * cell + 10:bx + k * cell + 22] = (255, 255, 255)
+        n = rng.normal(0, 3.0, img.shape)
+        img = np.clip(img.astype(np.float32) + n, 0, 255).astype(np.uint8)
+        got = autodetect.detect_board(img)
+        self.assertIsNotNone(got, got)
+        gx, gy, gw, gh = got
+        self.assertLess(abs(gx - bx), 8, got)
+        self.assertLess(abs(gy - by), 8, got)
+        self.assertLess(abs(gw - side), 10, got)
+
+    def test_diag_on_failure(self):
+        """Başarısızlıkta teşhis dolu dönmeli (kör debug turunu bitirir)."""
+        import autodetect
+        img = self._screen(0, 0, 480, extras=True)
+        img[:, :] = (43, 46, 49)
+        img[100:800, 100:900] = (30, 34, 40)
+        rect, diag = autodetect.detect_board_ex(img)
+        self.assertIsNone(rect)
+        self.assertTrue(diag.get("reason"), diag)
+        self.assertIn("image", diag)
+
+    def test_speed(self):
+        import time
+        import autodetect
+        img = self._screen(600, 300, 384)
+        t0 = time.time()
+        got = autodetect.detect_board(img)
+        dt = time.time() - t0
+        self.assertIsNotNone(got)
+        self.assertLess(dt, 15.0, "algılama %.1f s sürdü" % dt)
+
+
 class TestImports(unittest.TestCase):
     """main.py'de kullanılan her Q* adı mutlaka import edilmiş olmalı
     (PyQt6 uygulaması burada çalıştırılamaz; AST ile statik denetler)."""
